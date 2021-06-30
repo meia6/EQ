@@ -1,70 +1,73 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"log"
 	"math/rand"
 	"net/http"
+	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
 
 type counters struct {
-	//locker  sync.Mutex
 	sync.Mutex
+	key   string // 'key' is in the form [data]:[timestamp].
 	view  int
 	click int
 }
 
+// Used for implementing the global limit for the stats handler.
 type limiter struct {
 	sync.Mutex
 	curr int
 }
 
 var (
-	//c           = counters{}
-	max int = 500 // arbitrary global limit
-	//curr    int = 0
+	max     int = 50 // Global limit on requests for stats handler.
 	content     = []string{"sports", "entertainment", "business", "education"}
-	c           = []counters{}
+	c           = make([]counters, cMax*len(content))
 	limit       = limiter{}
-	cMax    int = 60 // 60 minutes of counters stored
-	store       = map[string]counters{}
+	size    int = 0  // Start with no counters stored.
+	cMax    int = 30 // Number of minutes worth of counters stored.
 )
 
-func refreshCounters(c []counters) {
-	c = []counters{}
-
-	for i := 0; i < len(content); i++ {
-		c = append(c, counters{})
-	}
-}
-
 func welcomeHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprint(w, "Welcome to EQ Works 😎")
+	timeCurrent := []rune(time.Now().Format("2006.01.02 15:04:05"))
+
+	fmt.Fprint(w, "Welcome to EQ Works 😎", "\n")
+	fmt.Fprint(w, "current time: ", string(timeCurrent), "\n")
 }
 
 func viewHandler(w http.ResponseWriter, r *http.Request) {
 	data := content[rand.Intn(len(content))]
 
-	timeCurrent := []rune(time.Now().Format("2006.01.02 15:04:05"))
-	conc := data + ":" + string(timeCurrent[0:16])
-	count := store[conc] // <- counters
-	count.Lock()
+	var count *counters
 
-	count.view++
-	fmt.Fprint(w, "Click count:", count.click, " View count:", count.view, "\n")
-	fmt.Fprint(w, "current requests: ", limit.curr, "/", max, "\n")
-	fmt.Fprint(w, conc) //take [0:16] to extract everything except for seconds
-	/*
-		for timestamp, counts := range store {
-			if val, ok := dict[]; ok{
-
+	if size != 0 {
+		for i := 0; i < len(content); i++ {
+			if c[i].key[0:strings.Index(c[i].key, ":")] == data { //
+				count = &c[i]
+				break
 			}
 		}
-	*/
 
-	count.Unlock()
+		fmt.Fprint(w, data, " page!", "\n", "\n")
+
+		count.Lock()
+		count.view++
+		count.Unlock()
+
+		for i := 0; i < size*len(content); i++ {
+			fmt.Fprint(w, c[i].key, ", views: ", c[i].view, ", clicks:", c[i].click, "\n")
+		}
+
+	} else {
+		fmt.Fprint(w, "Error, no counters", "\n") // Displayed if no counters are initialized (should never happen).
+	}
 
 	err := processRequest(r)
 	if err != nil {
@@ -86,20 +89,21 @@ func processRequest(r *http.Request) error {
 
 func processClick(data string) error {
 
-	timeCurrent := []rune(time.Now().Format("2001.01.01 01:01:01"))
-	count := store[data+string(timeCurrent[0:16])]
-	//locker := count.locker
+	var count *counters
 
-	count.Lock()
+	for i := 0; i < len(content); i++ {
+		if c[i].key[0:strings.Index(c[i].key, ":")] == data { // check
+			count = &c[i]
+			break
+		}
+	}
 
-	count.click++
-
-	count.Unlock()
+	(*count).Lock()
+	(*count).click++
+	(*count).Unlock()
 
 	return nil
 }
-
-// Arbitrarily set max number of map values to 60? for 60 minutes data stored
 
 func statsHandler(w http.ResponseWriter, r *http.Request) { // mock store queries
 	if !isAllowed() {
@@ -107,61 +111,122 @@ func statsHandler(w http.ResponseWriter, r *http.Request) { // mock store querie
 		return
 	} else {
 		// display counters to the page.
-		for i := 0; i < len(c); i++ { // loop for up to 60 times, displaying all 4 categories
-
-			for j := 0; j < len(content); j++ {
-
-			}
-		}
 		limit.Lock()
 		limit.curr++
 		limit.Unlock()
+
+		fmt.Fprint(w, "Stats page", "\n", "\n")
+		fmt.Fprint(w, "Requests: ", limit.curr, "/", max, "\n", "\n")
+
+		for i := 0; i < size*len(content); i++ {
+			fmt.Fprint(w, c[i].key, ", views: ", c[i].view, ", clicks:", c[i].click, "\n")
+		}
+
 	}
 }
 
-func isAllowed() bool { // change this block for global rate limiting
+func isAllowed() bool {
 	if limit.curr >= max {
 		return false
 	} else {
 		return true
 	}
-
 }
 
 func uploadCounters() error { // upload to mock store every 5 seconds
+
 	for {
-		// upload counters to the mock store
+		file, err := os.Create("mockstore.txt")
+		if err != nil {
+			log.Fatal("Error uploading to mock store", err)
+		}
+		for i := 0; i < size*len(content); i++ {
+			viewStr := strconv.Itoa(c[i].view)
+			clickStr := strconv.Itoa(c[i].click)
+
+			fmt.Fprintf(file, c[i].key+"|"+viewStr+","+clickStr+"\n")
+		}
+		file.Close()
 		time.Sleep(5 * time.Second)
 	}
-	return nil
+
 }
 
+// Resets the stats handler request count every minute.
 func rateLimiter() {
 	for {
-
 		limit.curr = 0
-		time.Sleep(time.Minute) // max of 'limit' queries per minute
-	}
-}
-
-func cycleCounters() {
-
-	timeCurrent := []rune(time.Now().Format("2001.01.01 01:01:01"))
-
-	for {
-		timeCurrent = []rune(time.Now().Format("2001.01.01 01:01:01"))
-
-		for i := 0; i < len(content); i++ {
-			key := content[i] + ":" + string(timeCurrent[0:16]) // key contains the content name and the date/time by minute
-			store[key] = counters{}
-		}
 		time.Sleep(time.Minute)
 	}
 }
 
+// Counters are organized so that the first n-indexes (where n is the length of content) are the counters for the current minute, the next n-indexes are the next minute, etc...
+// Older counters slowly get pushed to the later indexes and are eventually removed.
+func cycleCounters() {
+	timeCurrent := []rune(time.Now().Format("2006.01.02 15:04:05"))
+	for {
+		timeCurrent = []rune(time.Now().Format("2006.01.02 15:04:05"))
+		// If size is 0 (no counters), create the first set of counters regardless of the current time.
+		// Otherwise, wait until time = HH:MM:00.
+		if size > 0 {
+			if string(timeCurrent[16:19]) == ":00" {
+				if size < cMax {
+					size++
+				}
+				if string(timeCurrent[0:16]) != c[0].key[strings.Index(c[0].key, ":")+1:strings.Index(c[0].key, ":")+17] {
+					for i := size; i > 1; i-- {
+						for j := 0; j < len(content); j++ {
+							c[i*len(content)-j-1] = c[i*len(content)-j-len(content)-1]
+						}
+					}
+
+					for i := 0; i < len(content); i++ {
+						c[i] = counters{key: content[i] + ":" + string(timeCurrent[0:16]), click: 0, view: 0}
+					}
+				}
+			}
+		} else {
+			for i := 0; i < len(content); i++ {
+				c[i] = counters{key: content[i] + ":" + string(timeCurrent[0:16]), click: 0, view: 0}
+			}
+			size++
+		}
+		time.Sleep(time.Second)
+	}
+}
+
+func loadData() {
+	file, err := os.Open("mockstore.txt")
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	scanner := bufio.NewScanner(file)
+	count := 0
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		newKey := line[0:strings.Index(line, "|")]
+		newView, err := strconv.Atoi(line[strings.Index(line, "|")+1 : strings.Index(line, ",")])
+		newClick, err := strconv.Atoi(line[strings.Index(line, ",")+1:])
+
+		if err == nil {
+			c[count] = counters{key: newKey, view: newView, click: newClick}
+			if count%len(content) == 0 {
+				size++
+			}
+			count++
+		}
+	}
+
+}
+
 func main() {
 
-	//go cycleCounters()
+	loadData()
+
+	go cycleCounters()
 	go uploadCounters()
 	go rateLimiter()
 
