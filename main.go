@@ -32,7 +32,7 @@ var (
 	c           = make([]counters, cMax*len(content))
 	limit       = limiter{}
 	size    int = 0  // Start with no counters stored.
-	cMax    int = 30 // Number of minutes worth of counters stored.
+	cMax    int = 30 // Maximum number of minutes worth of counters stored.
 )
 
 func welcomeHandler(w http.ResponseWriter, r *http.Request) {
@@ -66,7 +66,7 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 	} else {
-		fmt.Fprint(w, "Error, no counters", "\n") // Displayed if no counters are initialized (should never happen).
+		fmt.Fprint(w, "Error, no counters", "\n") // Displayed if no counters are initialized (should realistically never happen).
 	}
 
 	err := processRequest(r)
@@ -92,7 +92,7 @@ func processClick(data string) error {
 	var count *counters
 
 	for i := 0; i < len(content); i++ {
-		if c[i].key[0:strings.Index(c[i].key, ":")] == data { // check
+		if c[i].key[0:strings.Index(c[i].key, ":")] == data {
 			count = &c[i]
 			break
 		}
@@ -105,7 +105,7 @@ func processClick(data string) error {
 	return nil
 }
 
-func statsHandler(w http.ResponseWriter, r *http.Request) { // mock store queries
+func statsHandler(w http.ResponseWriter, r *http.Request) {  // mock store queries
 	if !isAllowed() {
 		w.WriteHeader(429)
 		return
